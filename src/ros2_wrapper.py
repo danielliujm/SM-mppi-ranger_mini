@@ -118,8 +118,8 @@ class MPPLocalPlannerMPPI(Node):
             twist_stamped = Twist()
             # twist_stamped.header.stamp = self.get_clock().now().to_msg()
             
-            self.filtered_action = self.alpha * action + (1 - self.alpha) * self.filtered_action
-            action = self.filtered_action
+            # self.filtered_action = self.alpha * action + (1 - self.alpha) * self.filtered_action
+            # action = self.filtered_action
 
 
             
@@ -128,10 +128,11 @@ class MPPLocalPlannerMPPI(Node):
             y_effort = action[1].item() if abs(action[1].item()) < VMAX else np.sign(action[1].item())*VMAX 
 
             
-            print (x_effort, y_effort)
+            # print (x_effort, y_effort, action[2].item())
             
             twist_stamped.linear.x = x_effort
             twist_stamped.linear.y = y_effort
+            twist_stamped.angular.z = action[2].item()
 
             # twist_stamped.angular.z = action[1].item() #min(action[1].item(), VMAX)
             self.cmd_vel_pub.publish(twist_stamped)

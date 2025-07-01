@@ -5,8 +5,8 @@ from datetime import datetime
 NOW = datetime.now()
 
 VMAX = 0.33
-DT = 0.1
-HORIZON_LENGTH = 5
+DT = 0.5
+HORIZON_LENGTH = 3
 MAX_AGENT_NUM = 14
 ACTIVE_AGENTS = 1
 AGENT_GOALS = np.array([[0.0,-2.35], [0.0, 2.75]]) #goal of the agents, only required for evaluation metrics

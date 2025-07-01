@@ -33,12 +33,11 @@ class SMMPPIController:
         self.interacting_agents = []
 
         # Initialize MPPI with the dynamics and cost functions
-        cov = torch.eye(2, dtype=torch.float32).to(self.device)
+        cov = torch.eye(3, dtype=torch.float32).to(self.device)
         cov[0, 0] = 2
         cov[1, 1] = 2
-        
+        cov[2, 2] = 2
         # MPPI initialization
-        cov = torch.eye(2, dtype=torch.float32).to(self.device)
         self.mppi = mppi.MPPI(
             self.dynamics,
             self.cost,
@@ -53,8 +52,8 @@ class SMMPPIController:
             # kernel = mppi.RBFKernel (sigma = 1),
             # num_support_pts=5,
             # w_action_seq_cost=0.0,
-            u_min=torch.tensor([-0.4, -0.4], dtype=torch.float32).to(self.device),
-            u_max=torch.tensor([0.4, 0.4], dtype=torch.float32).to(self.device),
+            u_min=torch.tensor([-0.4, -0.4, -1.5], dtype=torch.float32).to(self.device),
+            u_max=torch.tensor([0.4, 0.4, 1.5], dtype=torch.float32).to(self.device),
         )
 
     def compute_control(self, current_state, previous_robot_state, robot_velocity, agent_states, previous_agent_states,agent_velocities): 
@@ -97,46 +96,49 @@ class SMMPPIController:
         next robot global state after executing action (shape: BS x 3)
         """
         assert s.ndim == 2 and s.shape[-1] == 3
-        assert a.ndim == 2 and a.shape[-1] == 2
+        assert a.ndim == 2 and a.shape[-1] == 3
 
         dt = self.dt
 
-        self.s2_ego.zero_()
-        s2_ego = torch.zeros_like(s).to(self.device)
-        s2_ego = self.s2_ego
-        d_theta = a[:, 1] * dt
-        turning_radius =  a[:, 0] / a[:, 1]
-        
+        # self.s2_ego.zero_()
+        # s2_ego = torch.zeros_like(s).to(self.device)
+        # s2_ego = self.s2_ego
+        # d_theta = a[:, 1] * dt
+        # turning_radius =  a[:, 0] / a[:, 1]
+
+
+        vx,vy, omega = a[:,0], a[:,1], a[:,2]        
         theta = s[:,2]
 
-        # s2_ego[:, 0] = torch.where(
-        #     a[:, 1] == 0, a[:, 0] * dt, turning_radius * torch.sin(d_theta)
-        # )
-        # s2_ego[:, 1] = torch.where(
-        #     a[:, 1] == 0, 0.0, turning_radius * (1.0 - torch.cos(d_theta))
-        # )
-        # s2_ego[:, 2] = torch.where(a[:, 1] == 0, 0.0, d_theta)
+        # # s2_ego[:, 0] = torch.where(
+        # #     a[:, 1] == 0, a[:, 0] * dt, turning_radius * torch.sin(d_theta)
+        # # )
+        # # s2_ego[:, 1] = torch.where(
+        # #     a[:, 1] == 0, 0.0, turning_radius * (1.0 - torch.cos(d_theta))
+        # # )
+        # # s2_ego[:, 2] = torch.where(a[:, 1] == 0, 0.0, d_theta)
         
         
-        # s2_ego [:,0] = a[:,0]*dt
-        # s2_ego [:,1] = a[:,1]*dt
-        # s2_ego [:,2] = 0
+        # # s2_ego [:,0] = a[:,0]*dt
+        # # s2_ego [:,1] = a[:,1]*dt
+        # # s2_ego [:,2] = 0
         
-        dx = a[:,0] #* torch.cos(theta) - a[:,1]*torch.sin(theta)
-        dy = a[:,1] #* torch.sin(theta) + a[:,1]*torch.cos(theta)
+        dx = vx* torch.cos(theta) - vy*torch.sin(theta)
+        dy = vx* torch.sin(theta) + vy*torch.cos(theta)
+        dtheta = omega * dt
         
         s2_global = torch.zeros_like(s)
-        # s2_global[:, 0] = (
-        #     s[:, 0] + s2_ego[:, 0] * torch.cos(s[:, 2]) - s2_ego[:, 1] * torch.sin(s[:, 2])
-        # )
-        # s2_global[:, 1] = (
-        #     s[:, 1] + s2_ego[:, 0] * torch.sin(s[:, 2]) + s2_ego[:, 1] * torch.cos(s[:, 2])
-        # )
-        # s2_global[:, 2] = normalize_angle(s[:, 2] + s2_ego[:, 2])
+        # # s2_global[:, 0] = (
+        # #     s[:, 0] + s2_ego[:, 0] * torch.cos(s[:, 2]) - s2_ego[:, 1] * torch.sin(s[:, 2])
+        # # )
+        # # s2_global[:, 1] = (
+        # #     s[:, 1] + s2_ego[:, 0] * torch.sin(s[:, 2]) + s2_ego[:, 1] * torch.cos(s[:, 2])
+        # # )
+        # # s2_global[:, 2] = normalize_angle(s[:, 2] + s2_ego[:, 2])
         
-        s2_global [:,0] = s[:,0]  + dx*dt
-        s2_global [:,1] = s[:,1]  + dy*dt
-        s2_global [:,2] = s[:,2]      
+        s2_global [:,0] = s[:,0] + dx*dt
+        s2_global [:,1] = s[:,1] + dy*dt
+        s2_global [:,2] = normalize_angle(s[:,2] +  dtheta)
 
         return s2_global
 
@@ -157,12 +159,12 @@ class SMMPPIController:
             # social mometum cost
             sm_costs += self.SocialCost(state, i, human_states)
             #dynamic obstacle cost
-            dynamic_obstacle_cost = torch.where(dist < 1.0, 1/(1+dist**2), torch.tensor(0.0, device=self.device))
+            dynamic_obstacle_cost = torch.where(dist < 2.0, 1/(1+dist**2), torch.tensor(0.0, device=self.device))
             dynamic_obstacle_costs += torch.sum(dynamic_obstacle_cost,dim=1)
             #static obstacle cost
             static_costs = self.collision_avoidance_cost(state_squeezed)
 
-        return 2*(goal_cost) + 0*dynamic_obstacle_costs # + 5*static_costs  #weights can be tuned for desired behaviour
+        return 10*(goal_cost) #sm_costs #dynamic_obstacle_costs # + 5*static_costs  #weights can be tuned for desired behaviour
         
 
     def get_interacting_agents(self):
@@ -174,7 +176,7 @@ class SMMPPIController:
             relative_angle = torch.rad2deg(direction_to_agent - robot_state[2])
             relative_angle = (relative_angle + 180) % 360 - 180  
             
-            if -120 <= relative_angle <= 120 and distance_to_agent < 5.0:  
+            if -90 <= relative_angle <= 90 and distance_to_agent < 2.0:  
                 self.interacting_agents.append(idx)
                 self.agent_weights[idx] = (1/distance_to_agent)
 
