@@ -34,11 +34,11 @@ class SMMPPIController:
 
         # Initialize MPPI with the dynamics and cost functions
         cov = torch.eye(3, dtype=torch.float32).to(self.device)
-        cov[0, 0] = 2
-        cov[1, 1] = 2
-        cov[2, 2] = 2
+        cov[0, 0] = 1
+        cov[1, 1] = 1
+        cov[2, 2] = 1
         # MPPI initialization
-        self.mppi = mppi.MPPI(
+        self.mppi = mppi.KMPPI(
             self.dynamics,
             self.cost,
             3,  # State dimension
@@ -49,8 +49,8 @@ class SMMPPIController:
             terminal_state_cost=self.terminal_cost,
             step_dependent_dynamics=True,
             # lambda_ = 100,
-            # kernel = mppi.RBFKernel (sigma = 1),
-            # num_support_pts=5,
+            kernel = mppi.RBFKernel (sigma = .1),
+            num_support_pts=3,
             # w_action_seq_cost=0.0,
             u_min=torch.tensor([-0.4, -0.4, -1.5], dtype=torch.float32).to(self.device),
             u_max=torch.tensor([0.4, 0.4, 1.5], dtype=torch.float32).to(self.device),
@@ -66,7 +66,7 @@ class SMMPPIController:
         self.agent_velocities = agent_velocities
         action = self.mppi.command(current_state)
         self.mppi.u_init = action
-        rollouts = self.mppi.states.squeeze(0)
+        rollouts = self.mppi.get_rollouts (current_state, num_rollouts = NUM_SAMPLES)
         costs = self.mppi.cost_total.squeeze(0)
 
         termination =  torch.linalg.norm(self.current_state[:2] - self.goal) < TERMINATION_TOLERANCE
@@ -150,6 +150,7 @@ class SMMPPIController:
         goal_cost = torch.sum(dist, dim=1)
         dynamic_obstacle_costs = torch.zeros(self.num_samples).to(self.device)
         sm_costs = torch.zeros(self.num_samples).to(self.device)
+        yaw_cost = state[..., 2]
 
         for i in range(ACTIVE_AGENTS):
             next_x_states = self.agent_states[i][0] + torch.linspace(self.dt,self.horizon*self.dt,self.horizon,device=self.device)* self.agent_velocities[i][0]
@@ -159,13 +160,12 @@ class SMMPPIController:
             # social mometum cost
             sm_costs += self.SocialCost(state, i, human_states)
             #dynamic obstacle cost
-            dynamic_obstacle_cost = torch.where(dist < 2.0, 1/(1+dist**2), torch.tensor(0.0, device=self.device))
+            dynamic_obstacle_cost = torch.where(dist < 1.5, 1/(0.2+dist**2), torch.tensor(0.0, device=self.device))
             dynamic_obstacle_costs += torch.sum(dynamic_obstacle_cost,dim=1)
             #static obstacle cost
             static_costs = self.collision_avoidance_cost(state_squeezed)
 
-        return 10*(goal_cost) #sm_costs #dynamic_obstacle_costs # + 5*static_costs  #weights can be tuned for desired behaviour
-        
+        return 50*(goal_cost)  #30 *dynamic_obstacle_costs + 5* sm_costs #+ 10*yaw_cost# + 5*static_costs  #weights can be tuned for desired behaviour
 
     def get_interacting_agents(self):
         self.interacting_agents = []

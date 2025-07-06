@@ -27,38 +27,93 @@ class VisualizationUtils:
         rollouts: (shape: 1 x NUM_SAMPLES x HORIZON x 3)
         costs: (shape: NUM_SAMPLES)
         """
+
         assert rollouts.ndim == 4 and rollouts.shape[0] == 1 and rollouts.shape[-1] == 3
 
         min_cost = torch.min(costs).item()
         max_cost = torch.max(costs).item()
 
         marker_array = MarkerArray()
-        for sample_idx in range(rollouts.shape[1]):
-            marker = Marker()
-            marker.header.frame_id = "map"
-            marker.id = sample_idx
-            marker.type = Marker.LINE_STRIP
-            marker.scale.x = 0.01
-            marker.lifetime = Duration(seconds=1.0).to_msg()  # type: ignore
+        
+        
+        min_cost_id = torch.argmin (costs).item()
+        max_cost_id = torch.argmax (costs).item()
+        
+        min_marker = Marker()
+        min_marker.header.frame_id = "map"
+        min_marker.id = min_cost_id
+        min_marker.type = Marker.LINE_STRIP
+        min_marker.scale.x = 0.005
+        min_marker.scale.y = 0.005
+        min_marker.scale.z = 0.005
+        min_marker.lifetime = Duration(seconds= 0.07).to_msg()  
+        min_marker.color.g = min_marker.color.a = 1.0
+        
+        for state_idx in range (rollouts.shape[2]):
+            state = rollouts [0,min_cost_id, state_idx,:]
+            min_marker.points.append (Point(x=state[0].item(), y=state[1].item()))
+        
+        max_marker = Marker()
+        max_marker.header.frame_id = "map"
+        max_marker.id = max_cost_id
+        max_marker.type = Marker.LINE_STRIP
+        max_marker.scale.x = 0.005
+        max_marker.scale.y = 0.005
+        max_marker.scale.z = 0.005
+        max_marker.lifetime = Duration(seconds=0.1).to_msg()  
+        max_marker.color.r = max_marker.color.a = 1.0
+        
+        for state_idx in range (rollouts.shape[2]):
+            state = rollouts [0,max_cost_id, state_idx,:]
+            max_marker.points.append (Point(x=state[0].item(), y=state[1].item()))
 
-            cost = costs[sample_idx].item()
-            if cost == min_cost:
-                marker.color.r = marker.color.g = marker.color.b = marker.color.a = 1.0
-            else:
-                cost_prop = (cost - min_cost) / (max_cost - min_cost)
-                # Smooth transition from red -> yellow -> green
-                # prop: 1.0 -> 0.5 -> 0.0
-                # r   : 1.0 -> 1.0 -> 0.0
-                # g   : 0.0 -> 1.0 -> 1.0
-                marker.color.r = min(1.0, 2 * cost_prop)
-                marker.color.g = max(0.0, 1 - 2 * cost_prop)
-                marker.color.a = 0.5
+        
+        marker_array.markers.append (min_marker)
+        # marker_array.markers.append (max_marker)
+    
+        
+        # marker = Marker()
+        # for sample_idx in range(rollouts.shape[1]):
+        #     marker = Marker()
+        #     marker.header.frame_id = "map"
+        #     marker.id = sample_idx
+        #     marker.type = Marker.SPHERE_LIST
+        #     marker.scale.x = 0.005
+        #     marker.scale.y = 0.005
+        #     marker.scale.z = 0.005
+        #     marker.lifetime = Duration(seconds=1.0).to_msg()  # type: ignore
+            
 
-            for state_idx in range(rollouts.shape[2]):
-                state = rollouts[0, sample_idx, state_idx]
-                marker.points.append(Point(x=state[0].item(), y=state[1].item()))
+        #     cost = costs[sample_idx].item()
+        #     if cost == min_cost:
+        #         marker.color.r = marker.color.g = marker.color.a = 1.0
+        #     else:
+        #         cost_prop = (cost - min_cost) / (max_cost - min_cost)
+        #         # Smooth transition from red -> yellow -> green
+        #         # prop: 1.0 -> 0.5 -> 0.0
+        #         # r   : 1.0 -> 1.0 -> 0.0
+        #         # g   : 0.0 -> 1.0 -> 1.0
+        #         marker.color.r = 1.0 #min(1.0, 2 * cost_prop)
+        #         marker.color.g = 0.0 #max(0.0, 1 - 2 * cost_prop)
+        #         marker.color.a = 1.0
+                
+                
+        #     min_cost_id = torch.argmin (costs)
+        #     print ("min cost id is ", min_cost_id)
 
-            marker_array.markers.append(marker)
+        #     for state_idx in range(rollouts.shape[2]):
+        #         state = rollouts[0, min_cost_id, state_idx,:]
+        #         marker.points.append(Point(x=state[0].item(), y=state[1].item()))
+                
+            
+        #     # max_cost_id = torch.argmax (costs)
+        #     # for state_idx in range(rollouts.shape[2]):
+        #     #     state = rollouts [0, max_cost_id, state_idx, :]
+        #     #     marker.points.append(Point(x=state[0].item(), y=state[1].item()))
+            
+        #     marker_array.markers.append (marker)
+            
+
 
         self._rollouts_pub.publish(marker_array)
 

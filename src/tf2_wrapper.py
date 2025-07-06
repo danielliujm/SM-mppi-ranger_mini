@@ -27,7 +27,7 @@ class TF2Wrapper:
                 target_frame,
                 source_frame,
                 rclpy.time.Time(),
-                timeout=Duration(seconds=0.1),  # type: ignore
+                timeout=Duration(seconds=0.01),  # type: ignore
             ).transform
         except:  # noqa: E722
             return None
