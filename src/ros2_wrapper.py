@@ -16,7 +16,7 @@ from datetime import datetime
 from vis_utils import *
 from visualization_msgs.msg import Marker, MarkerArray
 
-
+EPSILON = 1e-12
 
 class MPPLocalPlannerMPPI(Node):
     def __init__(self):
@@ -52,6 +52,9 @@ class MPPLocalPlannerMPPI(Node):
         self.viz_tool = VisualizationUtils(self)
         
         self.rob_marker_pub = self.create_publisher (Marker, "/debug_robot_location",1)
+
+        self.prev_control = 0.0
+        self.control_variation = 0.0
     
     
     def create_rollout_video(self, output_file="rollout_animation.mp4"):
@@ -93,7 +96,9 @@ class MPPLocalPlannerMPPI(Node):
 
         timer_callback_start_time = time.time()
         self.counter += 1
+        
         T_map_baselink = self.tf2_wrapper.get_latest_pose("map", "base_link")
+        
         if T_map_baselink is None:
             print("Can't find robot pose")
             return
@@ -111,6 +116,20 @@ class MPPLocalPlannerMPPI(Node):
                 ],
                 dtype=torch.float32,
             ).to(self.device)
+        
+        #############################################################################
+        min_marker = Marker()
+        min_marker.header.frame_id = "map"
+        min_marker.id = 0
+        min_marker.type = Marker.SPHERE_LIST
+        min_marker.scale.x = 0.05
+        min_marker.scale.y = 0.05
+        min_marker.scale.z = 0.05
+        min_marker.lifetime = Duration(seconds= 0.07).to_msg()  
+        min_marker.color.g = min_marker.color.a = 1.0
+        min_marker.points.append (Point(x=self.current_state[0].item(), y=self.current_state[1].item()))
+        self.rob_marker_pub.publish (min_marker)
+        #############################################################################
 
         # print ("r location is ", self.current_state)
         
@@ -126,7 +145,8 @@ class MPPLocalPlannerMPPI(Node):
             #print("tt ", time.time() - tt)
             if T_map_agent is None:
                 print("Can't find human pose") 
-                agent_state = torch.tensor([10.0, 10.0, 0.0], dtype=torch.float32).to(self.device)    
+                agent_state = torch.tensor([100.0, 100.0, 0.0], dtype=torch.float32).to(self.device)    
+                # self.agent_states[i] = agent_state
             else:
                 #print("found human ", i)
                 yaw = 2.0 * math.atan2(
@@ -148,21 +168,9 @@ class MPPLocalPlannerMPPI(Node):
 
     
 
-        #############################################################################
-        min_marker = Marker()
-        min_marker.header.frame_id = "map"
-        min_marker.id = 0
-        min_marker.type = Marker.SPHERE_LIST
-        min_marker.scale.x = 0.05
-        min_marker.scale.y = 0.05
-        min_marker.scale.z = 0.05
-        min_marker.lifetime = Duration(seconds= 0.07).to_msg()  
-        min_marker.color.g = min_marker.color.a = 1.0
-        min_marker.points.append (Point(x=self.current_state[0].item(), y=self.current_state[1].item()))
-        self.rob_marker_pub.publish (min_marker)
-        #############################################################################
+      
 
-        b4_time = datetime.now()
+        # b4_time = datetime.now()
         # Compute optimal control using MPPI
         action, self.rollouts, self.costs, termination = self.controller.compute_control(
             self.current_state, self.previous_robot_state, self.robot_velocity, self.agent_states, self.previous_agent_states, self.agent_velocities
@@ -172,7 +180,7 @@ class MPPLocalPlannerMPPI(Node):
         
         self.rollouts = self.rollouts.unsqueeze(0)
         
-        print ("action calculation took ", (datetime.now().microsecond-b4_time.microsecond)/1000, "ms")
+        # print ("action calculation took ", (datetime.now().microsecond-b4_time.microsecond)/1000, "ms")
         
         
         # print ("cost is ", self.costs)
@@ -198,7 +206,7 @@ class MPPLocalPlannerMPPI(Node):
             if abs(x_effort) < 0.03:
                 x_effort = 0.0
             if abs (y_effort) < 0.03:
-                y_effort = 0.0
+                y_effort = EPSILON
             if abs (action[2].item()) < 0.03:
                 action[2] = 0.0
 
@@ -208,6 +216,10 @@ class MPPLocalPlannerMPPI(Node):
             twist_stamped.linear.x = x_effort 
             twist_stamped.linear.y = y_effort
             twist_stamped.angular.z = action[2].item()
+
+            self.control_variation += np.sqrt((self.prev_control - y_effort)**2)
+            self.prev_control = y_effort
+
             
             # twist_stamped.linear.x = 0.0
             # twist_stamped.linear.y = 0.0
@@ -220,6 +232,9 @@ class MPPLocalPlannerMPPI(Node):
             self.linear_velocities.append(x_effort)
             self.angular_velocities.append(y_effort)
             self.time_steps.append(time.time() - self.start_time)
+
+            ### print control variation ###
+            print ("control variation is ", self.control_variation)
         elif termination:
             print("Reached the goal!!!!!")
             self.controller.move_to_next_goal()

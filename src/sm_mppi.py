@@ -34,9 +34,9 @@ class SMMPPIController:
 
         # Initialize MPPI with the dynamics and cost functions
         cov = torch.eye(3, dtype=torch.float32).to(self.device)
-        cov[0, 0] = 1
-        cov[1, 1] = 1
-        cov[2, 2] = 1
+        cov[0, 0] = 0.001
+        cov[1, 1] = 0.001
+        cov[2, 2] = 0.001
         # MPPI initialization
         self.mppi = mppi.KMPPI(
             self.dynamics,
@@ -49,11 +49,11 @@ class SMMPPIController:
             terminal_state_cost=self.terminal_cost,
             step_dependent_dynamics=True,
             # lambda_ = 100,
-            kernel = mppi.RBFKernel (sigma = .1),
-            num_support_pts=3,
+            kernel = mppi.RBFKernel (sigma = 2.5),
+            num_support_pts=2,
             # w_action_seq_cost=0.0,
-            u_min=torch.tensor([-0.4, -0.4, -1.5], dtype=torch.float32).to(self.device),
-            u_max=torch.tensor([0.4, 0.4, 1.5], dtype=torch.float32).to(self.device),
+            u_min=torch.tensor([-0.4, -0.15, -1.5], dtype=torch.float32).to(self.device),
+            u_max=torch.tensor([0.4, 0.15, 1.5], dtype=torch.float32).to(self.device),
         )
 
     def compute_control(self, current_state, previous_robot_state, robot_velocity, agent_states, previous_agent_states,agent_velocities): 
@@ -77,13 +77,22 @@ class SMMPPIController:
         """
         Cost function for MPPI optimization.
         Args:
-            state: (num_samples, horizon, 3) - States over the horizon.
-            action: (num_samples, horizon, 2) - Actions over the horizon.
+            state: (num_samples, 3) - States over the horizon.
+            action: (num_samples, 3) - Actions over the horizon.
 
         Returns:
             cost: (num_samples) - Total cost for each sample.
         """
+        heading_cost = torch.linalg.vector_norm (state[:,0:2]-self.goal, keepdim = False, dim = 1)
+
+
+
+       
+
+        cost = heading_cost # + action_cost
+        
         return 0
+    
 
     def dynamics(self, s: torch.Tensor, a: torch.Tensor, t=None) -> torch.Tensor:
         """
@@ -95,6 +104,8 @@ class SMMPPIController:
         Output:
         next robot global state after executing action (shape: BS x 3)
         """
+        # print ("s shape is ", s.shape)
+        # print ("a shape is ", a.shape)
         assert s.ndim == 2 and s.shape[-1] == 3
         assert a.ndim == 2 and a.shape[-1] == 3
 
@@ -107,43 +118,48 @@ class SMMPPIController:
         # turning_radius =  a[:, 0] / a[:, 1]
 
 
-        vx,vy, omega = a[:,0], a[:,1], a[:,2]        
-        theta = s[:,2]
+        # vx,vy, omega = a[:,0], a[:,1], a[:,2]        
+        # theta = s[:,2]
 
-        # # s2_ego[:, 0] = torch.where(
-        # #     a[:, 1] == 0, a[:, 0] * dt, turning_radius * torch.sin(d_theta)
-        # # )
-        # # s2_ego[:, 1] = torch.where(
-        # #     a[:, 1] == 0, 0.0, turning_radius * (1.0 - torch.cos(d_theta))
-        # # )
-        # # s2_ego[:, 2] = torch.where(a[:, 1] == 0, 0.0, d_theta)
+   
+        
+        # dx = vx* torch.cos(theta) - vy*torch.sin(theta)
+        # dy = vx* torch.sin(theta) + vy*torch.cos(theta)
+        # dtheta = omega * dt
+        
+        # s2_global = torch.zeros_like(s)
+    
+        
+        # s2_global [:,0] = s[:,0] + dx*dt
+        # s2_global [:,1] = s[:,1] + dy*dt
+        # s2_global [:,2] = normalize_angle(s[:,2] +  dtheta)
         
         
-        # # s2_ego [:,0] = a[:,0]*dt
-        # # s2_ego [:,1] = a[:,1]*dt
-        # # s2_ego [:,2] = 0
         
-        dx = vx* torch.cos(theta) - vy*torch.sin(theta)
-        dy = vx* torch.sin(theta) + vy*torch.cos(theta)
-        dtheta = omega * dt
-        
-        s2_global = torch.zeros_like(s)
-        # # s2_global[:, 0] = (
-        # #     s[:, 0] + s2_ego[:, 0] * torch.cos(s[:, 2]) - s2_ego[:, 1] * torch.sin(s[:, 2])
-        # # )
-        # # s2_global[:, 1] = (
-        # #     s[:, 1] + s2_ego[:, 0] * torch.sin(s[:, 2]) + s2_ego[:, 1] * torch.cos(s[:, 2])
-        # # )
-        # # s2_global[:, 2] = normalize_angle(s[:, 2] + s2_ego[:, 2])
-        
-        s2_global [:,0] = s[:,0] + dx*dt
-        s2_global [:,1] = s[:,1] + dy*dt
-        s2_global [:,2] = normalize_angle(s[:,2] +  dtheta)
+        heading = torch.atan2(a[:,1], a[:,0])  
+        velocity = torch.sqrt (a[:,0]**2 + a[:,1]**2) #*torch.sign (a[:,0])
 
-        return s2_global
+    
+
+        # heading [torch.abs(heading > np.pi/2)] = torch.sign (heading [torch.abs(heading > np.pi/2)]) * np.pi/2
+
+        s3_global = torch.zeros_like(s)
+        dx = velocity* torch.cos (s[:,2] + heading )
+        dy = velocity* torch.sin (s[:,2] + heading )
+
+        s3_global [:,0] = s[:,0] + dx*dt
+        s3_global [:,1] = s[:,1] + dy*dt
+        s3_global [:,2] = s[:,2] 
+
+        return s3_global
+
+
+
 
 
     def terminal_cost(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        # print ("state shape is ", state.shape)
+        # print ("action shape is ", action.shape)
         goal_expanded = self.goal[None, :]
         state_squeezed = state.squeeze()
         dist = torch.norm(goal_expanded-state_squeezed[:,:,:2], dim=2)# (N x T')
@@ -151,6 +167,14 @@ class SMMPPIController:
         dynamic_obstacle_costs = torch.zeros(self.num_samples).to(self.device)
         sm_costs = torch.zeros(self.num_samples).to(self.device)
         yaw_cost = state[..., 2]
+        
+        # action cost
+        action = action.squeeze()
+        action_cost = torch.sum((action[:, 1:, 1] - action[:, :-1, 1])**2, dim=1)
+
+
+        # heading cost 
+        heading_cost = torch.sum((torch.atan2(action[:, 1:, 1], action[:, 1:, 0]) - torch.atan2(action[:, :-1, 1], action[:, :-1, 0]))**2, dim=1)
 
         for i in range(ACTIVE_AGENTS):
             next_x_states = self.agent_states[i][0] + torch.linspace(self.dt,self.horizon*self.dt,self.horizon,device=self.device)* self.agent_velocities[i][0]
@@ -160,12 +184,30 @@ class SMMPPIController:
             # social mometum cost
             sm_costs += self.SocialCost(state, i, human_states)
             #dynamic obstacle cost
-            dynamic_obstacle_cost = torch.where(dist < 1.5, 1/(0.2+dist**2), torch.tensor(0.0, device=self.device))
+            
+            dynamic_obstacle_cost = torch.where(dist < 1.5, 1/(0.1+dist**2), torch.tensor(0.0, device=self.device))
             dynamic_obstacle_costs += torch.sum(dynamic_obstacle_cost,dim=1)
             #static obstacle cost
             static_costs = self.collision_avoidance_cost(state_squeezed)
+        
+        # print ("goal_cost shape is ", goal_cost.shape)
+        # print ("action_cost shape is ", action_cost.shape)
 
-        return 50*(goal_cost)  #30 *dynamic_obstacle_costs + 5* sm_costs #+ 10*yaw_cost# + 5*static_costs  #weights can be tuned for desired behaviour
+        goal_weight = 100.0
+        threshold = 0
+        action_weight = 8000
+        heading_weight = 0
+        if torch.sum (dynamic_obstacle_cost) > threshold:
+            heading_weight = 1000#1000
+            
+        else: 
+            heading_weight = 0#6000
+        dynamic_obstacle_weight = 100
+        sm_weight = 10
+
+        # print ("goal cost, actaion cost, and obstacle costs are ", goal_weight*torch.sum (goal_cost).item(), action_weight*torch.sum(action_cost).item(),dynamic_obstacle_weight*torch.sum(dynamic_obstacle_costs).item(), heading_weight * torch.sum (heading_cost).item(), sm_weight*torch.sum(sm_costs).item())#, '\r',end = '',flush = True) #, 10*torch.sum(yaw_cost), 5*torch.sum(static_costs))
+        print (f"goal cost : {goal_weight*torch.sum (goal_cost).item():.2f}, action cost: {action_weight*torch.sum(action_cost).item():.2f}, dynamic obstacle cost: {dynamic_obstacle_weight*torch.sum(dynamic_obstacle_costs).item():.2f}, heading cost: {heading_weight * torch.sum (heading_cost).item():.2f}, sm cost: {sm_weight*torch.sum(sm_costs).item():.2f}")#, '\r',end = '',flush = True) #, 10*torch.sum(yaw_cost), 5*torch.sum(static_costs))
+        return goal_weight*(goal_cost) + action_weight*action_cost + heading_weight * heading_cost  + dynamic_obstacle_weight*dynamic_obstacle_costs + sm_weight * sm_costs #+ 10*yaw_cost# + 5*static_costs  #weights can be tuned for desired behaviour
 
     def get_interacting_agents(self):
         self.interacting_agents = []
@@ -173,10 +215,16 @@ class SMMPPIController:
         for idx, agent_state in self.agent_states.items():
             direction_to_agent = torch.arctan2(agent_state[1] - self.current_state[1], agent_state[0] - self.current_state[0])
             distance_to_agent = torch.norm(agent_state[:2] - self.current_state[:2])
-            relative_angle = torch.rad2deg(direction_to_agent - robot_state[2])
+
+            if self.current_goal_index == 0:
+                robot_direction = np.pi/2
+            elif self.current_goal_index == 1:
+                robot_direction = -np.pi/2
+
+            relative_angle = torch.rad2deg(direction_to_agent -robot_direction)
             relative_angle = (relative_angle + 180) % 360 - 180  
             
-            if -90 <= relative_angle <= 90 and distance_to_agent < 2.0:  
+            if -90 <= relative_angle <= 90 and distance_to_agent < 2:  
                 self.interacting_agents.append(idx)
                 self.agent_weights[idx] = (1/distance_to_agent)
 
@@ -184,6 +232,7 @@ class SMMPPIController:
     def SocialCost(self, state: torch.Tensor,i,human_states, **kwargs) -> torch.Tensor:
         sm_cost = 0.0
         self.get_interacting_agents()
+        print ("number of interacting agents is ", len(self.interacting_agents))
         if i in self.interacting_agents:
             state_squeezed = state.squeeze()
             r_c = (state_squeezed[:,:,:2] + human_states) / 2
